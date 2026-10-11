@@ -1,0 +1,15 @@
+# 個人實驗紀錄：絕不上傳
+seeding_log.csv
+
+__pycache__/
+*.pyc
+
+# Vercel 連結與本機環境檔
+.vercel/
+.env
+.env.*
+
+# 已放棄的舊版設計備份
+_old/
+
+node_modules/

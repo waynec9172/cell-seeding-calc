@@ -4,23 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>細胞計數與種盤稀釋計算器</title>
-<meta name="description" content="血球計數盤加 trypan blue 計數，算出原液濃度、存活率，以及種盤要取多少原液、加多少 DMEM。">
+<meta name="description" content="血球計數盤加 trypan blue 計數，算出原液濃度、存活率，以及種盤要取多少原液、加多少 DMEM，或計算 96 / 24 孔切孔細胞產量。支援 PWA 離線使用。">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2563eb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="細胞計算器">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <style>
 :root {
   --bg: #f4f5f7; --panel: #ffffff; --text: #1c1f24; --muted: #66707d; --line: #dde1e6;
-  --accent: #2563eb; --ok: #1a7f37; --warn: #a15c07; --err: #c62828;
+  --accent: #2563eb; --accent-light: #eff6ff; --ok: #1a7f37; --warn: #a15c07; --err: #c62828;
   --ok-bg: #e7f5ec; --warn-bg: #fdf1dc; --err-bg: #fde8e8; --field: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #14161a; --panel: #1d2026; --text: #e8eaed; --muted: #9aa3ae; --line: #343a43;
-    --accent: #6ea0ff; --ok: #5fcf80; --warn: #f0b24a; --err: #ff7b7b;
+    --accent: #6ea0ff; --accent-light: #1e293b; --ok: #5fcf80; --warn: #f0b24a; --err: #ff7b7b;
     --ok-bg: #1b2e22; --warn-bg: #33290f; --err-bg: #3a1c1c; --field: #14161a;
   }
 }
 :root[data-theme="dark"] {
   --bg: #14161a; --panel: #1d2026; --text: #e8eaed; --muted: #9aa3ae; --line: #343a43;
-  --accent: #6ea0ff; --ok: #5fcf80; --warn: #f0b24a; --err: #ff7b7b;
+  --accent: #6ea0ff; --accent-light: #1e293b; --ok: #5fcf80; --warn: #f0b24a; --err: #ff7b7b;
   --ok-bg: #1b2e22; --warn-bg: #33290f; --err-bg: #3a1c1c; --field: #14161a;
 }
 * { box-sizing: border-box; }
@@ -29,10 +37,26 @@ body {
   margin: 0; background: var(--bg); color: var(--text); line-height: 1.5;
   font: 16px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif;
 }
-header, main, .logpanel { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
-header { padding-top: 20px; padding-bottom: 8px; }
+header, .mode-bar, main, .logpanel { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+header { padding-top: 18px; padding-bottom: 6px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.header-title { flex: 1; min-width: 260px; }
 h1 { font-size: 1.35rem; margin: 0; }
-.sub { margin: 2px 0 0; color: var(--muted); font-size: .9rem; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: .88rem; }
+
+.btn-install {
+  font-size: .85rem; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--accent);
+  background: var(--accent-light); color: var(--accent); font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-install:hover { opacity: .9; }
+
+.mode-bar { padding-top: 6px; padding-bottom: 8px; }
+.mode-tabs { display: flex; gap: 8px; background: var(--panel); padding: 4px; border-radius: 10px; border: 1px solid var(--line); }
+.mode-tab {
+  flex: 1; padding: 9px 12px; font-weight: 600; font-size: .95rem; border: none; border-radius: 7px;
+  background: transparent; color: var(--muted); cursor: pointer; text-align: center; transition: all .15s ease;
+}
+.mode-tab.active { background: var(--accent); color: #fff; box-shadow: 0 2px 6px rgba(37,99,235,.25); }
 
 .summary {
   position: sticky; top: 0; z-index: 5; background: var(--panel);
@@ -44,7 +68,7 @@ h1 { font-size: 1.35rem; margin: 0; }
 .summary.err  { border-color: var(--err); }  .summary.err  > div { color: var(--err); }
 .summary.idle > div { color: var(--muted); font-weight: 500; }
 
-.layout { display: grid; gap: 16px; padding-top: 16px; padding-bottom: 16px; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); }
+.layout { display: grid; gap: 16px; padding-top: 14px; padding-bottom: 16px; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); }
 @media (max-width: 820px) { .layout { grid-template-columns: minmax(0, 1fr); } }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
 .panel h2 { font-size: 1rem; margin: 0 0 8px; }
@@ -73,6 +97,7 @@ button {
   border: 1px solid var(--line); background: var(--panel); color: var(--text);
 }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.secondary { background: var(--accent-light); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 button.danger { color: var(--err); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -93,6 +118,15 @@ ol.recipe li.last { font-weight: 700; }
 .stage { color: var(--accent); font-weight: 700; }
 .empty { color: var(--muted); }
 
+.stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px; }
+.stat-card {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center;
+}
+.stat-card.main { grid-column: span 2; border-color: var(--accent); background: var(--accent-light); }
+.stat-title { font-size: .8rem; color: var(--muted); margin-bottom: 4px; }
+.stat-val { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: .8rem; color: var(--muted); margin-top: 2px; }
+
 .logpanel { padding-bottom: 40px; }
 .tablewrap { overflow-x: auto; }
 table.log { width: 100%; border-collapse: collapse; font-size: .85rem; white-space: nowrap; }
@@ -101,34 +135,70 @@ table.log th:first-child, table.log td:first-child { text-align: left; }
 footer { color: var(--muted); font-size: .8rem; text-align: center; padding: 0 16px 28px; }
 .sr { position: absolute; left: -9999px; }
 @media (max-width: 420px) {
-  header, main, .logpanel { padding-left: 10px; padding-right: 10px; }
+  header, .mode-bar, main, .logpanel { padding-left: 10px; padding-right: 10px; }
   .panel { padding: 12px; }
   .row { grid-template-columns: minmax(0, 1fr) 5.8rem 2.6rem; gap: 6px; }
   .pair { grid-template-columns: 2.6rem 1fr 1fr; gap: 6px; }
   .grids { flex-wrap: wrap; gap: 4px 14px; }
   .summary > div { padding: 8px 10px; font-size: 1rem; }
+  .stat-grid { grid-template-columns: 1fr; }
+  .stat-card.main { grid-column: span 1; }
 }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>細胞計數與種盤稀釋計算器</h1>
-  <p class="sub">血球計數盤 + trypan blue 計數 → 原液濃度、存活率 → 要取多少原液、加多少 DMEM。輸入即時重算。</p>
+  <div class="header-title">
+    <h1>細胞計數與種盤稀釋計算器</h1>
+    <p class="sub">血球計數盤 + trypan blue 計數 → 原液濃度、存活率 → 種盤配方與切孔細胞量推算</p>
+  </div>
+  <button type="button" id="btnInstall" class="btn-install" style="display:none;" aria-label="安裝應用程式">
+    📱 安裝 App（支援離線）
+  </button>
 </header>
+
+<div class="mode-bar">
+  <div class="mode-tabs" role="tablist" aria-label="模式切換">
+    <button type="button" class="mode-tab active" id="tabSeeding" role="tab" aria-selected="true">
+      🌱 種盤配方 (Seeding)
+    </button>
+    <button type="button" class="mode-tab" id="tabHarvest" role="tab" aria-selected="false">
+      🔬 切孔／收孔細胞量 (Harvest)
+    </button>
+  </div>
+</div>
 
 <div id="summary" class="summary idle" role="status" aria-live="polite"><div id="summaryText">請輸入上槽活細胞數</div></div>
 
 <main class="layout">
   <div>
+    <!-- ① 打散與稀釋 Panel -->
     <section class="panel" aria-labelledby="h-dil">
       <h2 id="h-dil">打散與稀釋</h2>
-      <div class="row">
-        <label for="dmem_ml">打散用 DMEM</label>
-        <input id="dmem_ml" type="text" inputmode="decimal" autocomplete="off" value="2">
-        <span class="unit">mL</span>
+      
+      <!-- Seeding 專用打散體積 -->
+      <div id="boxSeedingVol">
+        <div class="row">
+          <label for="dmem_ml">打散用 DMEM</label>
+          <input id="dmem_ml" type="text" inputmode="decimal" autocomplete="off" value="2">
+          <span class="unit">mL</span>
+        </div>
+        <p class="hint">離心後用這麼多 DMEM 把細胞打散成一管（用來算整管有多少細胞）</p>
       </div>
-      <p class="hint">離心後用這麼多 DMEM 把細胞打散成一管（用來算整管有多少細胞）</p>
+
+      <!-- Harvest 專用打散體積 -->
+      <div id="boxHarvestVol" style="display:none;">
+        <div class="row">
+          <label for="harvest_vol">收孔打散用 DMEM</label>
+          <input id="harvest_vol" type="text" inputmode="decimal" autocomplete="off" value="100">
+          <select id="harvest_unit" aria-label="收孔打散體積單位" style="padding: 4px 6px;">
+            <option value="ul">µL</option>
+            <option value="ml">mL</option>
+          </select>
+        </div>
+        <p class="hint">把切下來的孔用多少 DMEM 打散吹勻（96 孔常用 100~200 µL；24 孔常用 500 µL）</p>
+      </div>
 
       <h3>① 計數前預稀釋（細胞太濃才用；不稀釋就維持 10＋0）</h3>
       <div class="row"><label for="pre_cell">取細胞液</label>
@@ -147,6 +217,7 @@ footer { color: var(--muted); font-size: .8rem; text-align: center; padding: 0 1
       <div class="df" id="dfLabel">總稀釋倍數 DF ＝ 1 × 2 ＝ 2</div>
     </section>
 
+    <!-- ② 計數（血球計數盤）Panel，兩模式共用 -->
     <section class="panel" aria-labelledby="h-cnt">
       <h2 id="h-cnt">計數（血球計數盤）</h2>
       <div class="grids" role="radiogroup" aria-label="每槽大格數">
@@ -164,8 +235,10 @@ footer { color: var(--muted); font-size: .8rem; text-align: center; padding: 0 1
       <p class="hint">填各槽的總顆數；下槽可留空（只用上槽）。</p>
     </section>
 
-    <section class="panel" aria-labelledby="h-exp">
-      <h2 id="h-exp">實驗設定</h2>
+    <!-- ③ 模式專屬設定 Panel -->
+    <!-- Seeding: 實驗種盤設定 -->
+    <section class="panel" id="panelSeedingSetup" aria-labelledby="h-exp">
+      <h2 id="h-exp">種盤設定</h2>
       <div class="row">
         <label for="preset">快速帶入</label>
         <select id="preset">
@@ -181,26 +254,70 @@ footer { color: var(--muted); font-size: .8rem; text-align: center; padding: 0 1
         <input id="wells" type="text" inputmode="numeric" autocomplete="off" value="39"><span class="unit">孔</span></div>
       <div class="row"><label for="margin">多抓的餘量</label>
         <input id="margin" type="text" inputmode="decimal" autocomplete="off" value="25"><span class="unit">%</span></div>
-      <p class="hint">三格都可直接改，改了會自動變成 custom。餘量是為了吸管殘留、回管混勻的損耗多配的量。</p>
+      <p class="hint">直接修改會自動標為 custom。餘量是為避免分裝與吹打損耗多配的量。</p>
+    </section>
+
+    <!-- Harvest: 收孔來源設定 -->
+    <section class="panel" id="panelHarvestSetup" style="display:none;" aria-labelledby="h-har">
+      <h2 id="h-har">收孔來源設定</h2>
+      <div class="row">
+        <label for="harvest_plate">來源孔盤</label>
+        <select id="harvest_plate">
+          <option value="96" selected>96 孔盤 (0.32 cm²)</option>
+          <option value="24">24 孔盤 (1.9 cm²)</option>
+          <option value="12">12 孔盤 (3.8 cm²)</option>
+          <option value="6">6 孔盤 (9.5 cm²)</option>
+          <option value="48">48 孔盤 (0.95 cm²)</option>
+          <option value="10cm">10 cm Dish (55 cm²)</option>
+          <option value="custom">自訂規格</option>
+        </select><span></span>
+      </div>
+      <div class="row"><label for="harvested_wells">收取孔數</label>
+        <input id="harvested_wells" type="text" inputmode="numeric" autocomplete="off" value="1"><span class="unit">孔</span></div>
+      <div class="row"><label for="seeded_per_well">當初每孔種植數</label>
+        <input id="seeded_per_well" type="text" inputmode="decimal" autocomplete="off" placeholder="選填（算倍增率）"><span class="unit">cells</span></div>
+      
+      <div id="boxCustomHarvest" style="display:none; margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px;">
+        <div class="row"><label for="custom_area">單孔生長面積</label>
+          <input id="custom_area" type="text" inputmode="decimal" autocomplete="off" value="0.32"><span class="unit">cm²</span></div>
+        <div class="row"><label for="custom_wells_total">整盤總孔數</label>
+          <input id="custom_wells_total" type="text" inputmode="numeric" autocomplete="off" value="96"><span class="unit">孔</span></div>
+      </div>
+      <p class="hint">例如從 96 孔切 1 孔或 24 孔切 1 孔下來，輸入切下的孔數即可換算單孔產量。</p>
     </section>
   </div>
 
   <div>
+    <!-- 計數結果 Panel -->
     <section class="panel" aria-labelledby="h-res">
       <h2 id="h-res">計數結果</h2>
       <div id="resultBody"><p class="empty">輸入上槽（和下槽）的細胞數後，這裡會顯示結果。</p></div>
     </section>
 
+    <!-- 判斷 Panel -->
     <section class="panel" aria-labelledby="h-chk">
       <h2 id="h-chk">判斷</h2>
       <ul class="findings" id="findings"></ul>
     </section>
 
-    <section class="panel" aria-labelledby="h-rcp">
-      <h2 id="h-rcp">配方</h2>
+    <!-- Seeding: 配方 Panel -->
+    <section class="panel" id="panelRecipe" aria-labelledby="h-rcp">
+      <h2 id="h-rcp">種盤配方</h2>
       <div id="recipe"><p class="empty">—</p></div>
     </section>
 
+    <!-- Harvest: 收孔產量分析 Panel -->
+    <section class="panel" id="panelHarvestResult" style="display:none;" aria-labelledby="h-hres">
+      <h2 id="h-hres">收孔細胞量分析</h2>
+      <div id="harvestStats">
+        <p class="empty">—</p>
+      </div>
+      <div class="btns" id="boxTransferToSeeding" style="display:none;">
+        <button type="button" class="secondary" id="btnUseForSeeding">🌱 將此原液濃度帶入種盤配方</button>
+      </div>
+    </section>
+
+    <!-- 速算提示與操作按鈕 -->
     <section class="panel" aria-labelledby="h-k">
       <h2 id="h-k">速算提示</h2>
       <div id="quick"><p class="empty">—</p></div>
@@ -217,7 +334,7 @@ footer { color: var(--muted); font-size: .8rem; text-align: center; padding: 0 1
 <section class="logpanel">
   <div class="panel">
     <h2>紀錄</h2>
-    <p class="hint">紀錄只存在這個瀏覽器（這台裝置）裡，不會上傳。換裝置或清除瀏覽器資料就會消失，要保存請下載 CSV。</p>
+    <p class="hint">紀錄只存在這個瀏覽器（這台裝置）裡，不會上傳。支援種盤與收孔兩種紀錄，可下載 CSV 保留。</p>
     <div class="tablewrap" id="logWrap"><p class="empty">還沒有紀錄。</p></div>
     <div class="btns">
       <button type="button" id="btnCsv">下載 CSV</button>
@@ -245,6 +362,15 @@ const PRESETS = {
   "96d5": { cells: 1000, ul: 100, wells: 30 },
   "24tw": { cells: 5000, ul: 500, wells: 12 },
   "24d1": { cells: 20000, ul: 500, wells: 12 },
+};
+const HARVEST_PRESETS = {
+  "96": { name: "96 孔盤", area: 0.32, wells: 96, defaultVolUl: 100 },
+  "48": { name: "48 孔盤", area: 0.95, wells: 48, defaultVolUl: 250 },
+  "24": { name: "24 孔盤", area: 1.9, wells: 24, defaultVolUl: 500 },
+  "12": { name: "12 孔盤", area: 3.8, wells: 12, defaultVolUl: 1000 },
+  "6": { name: "6 孔盤", area: 9.5, wells: 6, defaultVolUl: 1500 },
+  "10cm": { name: "10 cm Dish", area: 55.0, wells: 1, defaultVolUl: 5000 },
+  "custom": { name: "自訂規格", area: null, wells: 1, defaultVolUl: 500 },
 };
 const CUSTOM = "custom";
 
@@ -364,10 +490,56 @@ function planSeeding(stockConc, cellsPerWell, wellUl, wells, marginPct = 25, tub
   };
 }
 
-// inp: {tubeMl, preCell, preDil, tbCell, tbDye, grids, aLive, aDead, bLive|null, bDead|null,
-//       preset, cellsPerWell, wellUl, wells, marginPct}
+// 切孔／收孔細胞量計算
+function planHarvest(stockConc, viabilityPct, harvestVolUl, harvestedWells,
+                     plateType = "96", customArea = null, customWells = null,
+                     seededPerWell = null) {
+  checkPositive(stockConc, "懸浮液濃度");
+  checkPositive(harvestVolUl, "收孔打散體積");
+  checkPositive(harvestedWells, "收取的孔數");
+
+  const preset = HARVEST_PRESETS[plateType] || HARVEST_PRESETS["custom"];
+  const area = plateType === "custom" ? customArea : preset.area;
+  const wellsTotal = plateType === "custom" ? customWells : preset.wells;
+
+  // 收孔懸浮液中的總活細胞
+  const totalHarvestLive = stockConc * (harvestVolUl / 1000);
+  // 單孔平均活細胞數
+  const cellsPerWell = totalHarvestLive / harvestedWells;
+  // 單孔總細胞數（含死細胞）
+  const totalPerWell = viabilityPct > 0 ? (cellsPerWell / (viabilityPct / 100)) : cellsPerWell;
+  // 生長密度 (cells/cm²)
+  const density = (area && area > 0) ? (cellsPerWell / area) : null;
+  // 整盤推估總量
+  const plateTotal = (wellsTotal && wellsTotal > 0) ? (cellsPerWell * wellsTotal) : null;
+
+  // 增殖倍數與倍增世代
+  let fold = null, doublings = null;
+  if (seededPerWell && seededPerWell > 0) {
+    fold = cellsPerWell / seededPerWell;
+    doublings = fold > 0 ? (Math.log(fold) / Math.LN2) : 0;
+  }
+
+  return {
+    plateType,
+    plateName: preset.name,
+    harvestedWells,
+    harvestVolUl,
+    totalHarvestLive,
+    cellsPerWell,
+    totalPerWell,
+    area,
+    density,
+    wellsTotal,
+    plateTotal,
+    seededPerWell,
+    fold,
+    doublings,
+  };
+}
+
 function validateInputs(inp) {
-  checkPositive(inp.tubeMl, "打散用 DMEM 體積");
+  if (inp.tubeMl !== undefined) checkPositive(inp.tubeMl, "打散用 DMEM 體積");
   checkPositive(inp.preCell, "預稀釋的細胞液體積");
   checkNonNegative(inp.preDil, "預稀釋的 DMEM 體積");
   checkPositive(inp.tbCell, "Trypan 混合的細胞液體積");
@@ -377,10 +549,10 @@ function validateInputs(inp) {
   checkNonNegative(inp.aDead, "上槽死細胞數");
   if ((inp.bLive === null) !== (inp.bDead === null)) throw new Error("下槽的活細胞數與死細胞數要一起輸入，或兩者都留空");
   if (inp.bLive !== null) { checkNonNegative(inp.bLive, "下槽活細胞數"); checkNonNegative(inp.bDead, "下槽死細胞數"); }
-  checkPositive(inp.cellsPerWell, "每孔細胞數");
-  checkPositive(inp.wellUl, "每孔體積");
-  checkPositive(inp.wells, "孔數");
-  checkNonNegative(inp.marginPct, "餘量 %");
+  if (inp.cellsPerWell !== undefined) checkPositive(inp.cellsPerWell, "每孔細胞數");
+  if (inp.wellUl !== undefined) checkPositive(inp.wellUl, "每孔體積");
+  if (inp.wells !== undefined) checkPositive(inp.wells, "孔數");
+  if (inp.marginPct !== undefined) checkNonNegative(inp.marginPct, "餘量 %");
   if (inp.aLive + inp.aDead + (inp.bLive || 0) + (inp.bDead || 0) <= 0) throw new Error("沒有輸入任何細胞數，無法計算");
 }
 
@@ -410,7 +582,7 @@ function analyze(inp) {
     deadTotal += inp.bDead;
   }
   const viability = viabilityPct(liveTotal, deadTotal);
-  const tubeCells = stock * inp.tubeMl;
+  const tubeCells = inp.tubeMl ? stock * inp.tubeMl : 0;
 
   const findings = [densityFinding("上槽", perGridA, inp.grids)];
   if (perGridB !== null) findings.push(densityFinding("下槽", perGridB, inp.grids));
@@ -429,7 +601,7 @@ function analyze(inp) {
   let plan = null;
   if (stock <= 0) {
     findings.push({ level: ERR, message: "原液濃度為 0（沒有計到活細胞），無法計算配方" });
-  } else {
+  } else if (inp.cellsPerWell !== undefined) {
     plan = planSeeding(stock, inp.cellsPerWell, inp.wellUl, inp.wells, inp.marginPct, inp.tubeMl);
     if (plan.cellsNeeded > plan.tubeCells)
       findings.push({ level: ERR, message: `需要 ${sci(plan.cellsNeeded)} 顆 > 整管活細胞 ${sci(plan.tubeCells)} 顆：細胞不夠` });
@@ -454,8 +626,50 @@ function analyze(inp) {
   };
 }
 
+function analyzeHarvest(inp, harvestOpts) {
+  const baseAnalysis = analyze(inp);
+  if (baseAnalysis.stock <= 0) {
+    return { ...baseAnalysis, harvestPlan: null };
+  }
+  const harvestPlan = planHarvest(
+    baseAnalysis.stock,
+    baseAnalysis.viability,
+    harvestOpts.harvestVolUl,
+    harvestOpts.harvestedWells,
+    harvestOpts.plateType,
+    harvestOpts.customArea,
+    harvestOpts.customWells,
+    harvestOpts.seededPerWell
+  );
+
+  const extraFindings = [];
+  if (harvestPlan.density) {
+    if (harvestPlan.density > 2.5e5) {
+      extraFindings.push({ level: WARN, message: `生長密度 ${sci(harvestPlan.density)} cells/cm² 偏高（> 2.5×10⁵）：細胞可能已 100% 滿盤（過密），建議縮短培養時間` });
+    } else if (harvestPlan.density < 2e4) {
+      extraFindings.push({ level: WARN, message: `生長密度 ${sci(harvestPlan.density)} cells/cm² 偏低（< 2×10⁴）：約 < 20% confluence，若要做收樣細胞量可能不足` });
+    } else {
+      extraFindings.push({ level: OK, message: `生長密度 ${sci(harvestPlan.density)} cells/cm²：約在對數生長期／適合收樣區間` });
+    }
+  }
+  if (harvestPlan.fold !== null) {
+    if (harvestPlan.fold < 1) {
+      extraFindings.push({ level: WARN, message: `收孔細胞數小於當初種植數（增殖倍數 ${fmtNum(harvestPlan.fold)}× < 1）：細胞可能未貼附或生長停滯` });
+    } else {
+      extraFindings.push({ level: OK, message: `較當初種植增殖 ${fmtNum(harvestPlan.fold)} 倍（約經歷 ${fmtNum(Number(harvestPlan.doublings.toFixed(1)))} 次分裂倍增）` });
+    }
+  }
+
+  const allFindings = [...baseAnalysis.findings, ...extraFindings];
+  return {
+    ...baseAnalysis,
+    harvestPlan,
+    findings: allFindings,
+    hasError: allFindings.some((f) => f.level === ERR),
+  };
+}
+
 const ul = (v) => `${roundHalfUp(v)} µL`;
-// 配方步驟：µL 四捨五入到整數；DMEM 用總體積相減，確保加總吻合
 function recipeSteps(inp, plan) {
   const vt = roundHalfUp(plan.totalUl);
   const steps = [];
@@ -490,6 +704,16 @@ function summaryLine(a) {
   return { level, text };
 }
 
+function summaryHarvestLine(a) {
+  const level = a.hasError ? ERR : a.findings.some((f) => f.level === WARN) ? WARN : OK;
+  const h = a.harvestPlan;
+  if (!h) return { level, text: `懸浮液 ${sci(a.stock)} cells/mL　存活率 ${a.viability.toFixed(1)}%` };
+  let text = `單孔 ${sci(h.cellsPerWell)} 顆（${h.plateName}）　存活率 ${a.viability.toFixed(1)}%`;
+  if (h.density) text += `　密度 ${sci(h.density)} /cm²`;
+  if (h.fold !== null) text += `　增殖 ${fmtNum(h.fold)}×`;
+  return { level, text };
+}
+
 function renderReport(a) {
   const inp = a.inputs, L = [];
   const pre = (inp.preCell + inp.preDil) / inp.preCell, tb = (inp.tbCell + inp.tbDye) / inp.tbCell;
@@ -503,7 +727,7 @@ function renderReport(a) {
   } else L.push("下槽：未輸入，只用上槽");
   L.push(`存活率：${a.viability.toFixed(2)} %`);
   L.push(`原液濃度 C：${sci(a.stock)} cells/mL`);
-  L.push(`整管活細胞（${fmtNum(inp.tubeMl)} mL）：${sci(a.tubeCells)} 顆`);
+  if (inp.tubeMl) L.push(`整管活細胞（${fmtNum(inp.tubeMl)} mL）：${sci(a.tubeCells)} 顆`);
   L.push("", "=== 判斷 ===");
   a.findings.forEach((f) => L.push(`[${f.level}] ${f.message}`));
   L.push("", "=== 配方 ===");
@@ -527,7 +751,47 @@ function renderReport(a) {
   return L.join("\n");
 }
 
-// 表單字串 → inp；有問題就丟 Error（訊息直接顯示給使用者）
+function renderHarvestReport(a) {
+  const inp = a.inputs, h = a.harvestPlan, L = [];
+  const pre = (inp.preCell + inp.preDil) / inp.preCell, tb = (inp.tbCell + inp.tbDye) / inp.tbCell;
+  const r4 = (x) => fmtNum(Number(x.toFixed(4)));
+  L.push("=== 計數結果 ===");
+  L.push(`總稀釋倍數 DF：${r4(a.df)}（預稀釋 ${r4(pre)} × trypan ${r4(tb)}）`);
+  L.push(`上槽濃度：${sci(a.concA)} cells/mL（平均每格 ${fmtNum(a.perGridA)} 顆）`);
+  if (a.concB !== null) {
+    L.push(`下槽濃度：${sci(a.concB)} cells/mL（平均每格 ${fmtNum(a.perGridB)} 顆）`);
+    L.push(`兩槽差異：${a.diffPct.toFixed(2)} %`);
+  } else L.push("下槽：未輸入，只用上槽");
+  L.push(`存活率：${a.viability.toFixed(2)} %`);
+  L.push(`懸浮液濃度 C：${sci(a.stock)} cells/mL`);
+  if (h) L.push(`收下總活細胞（${fmtNum(h.harvestVolUl)} µL）：${sci(h.totalHarvestLive)} 顆`);
+
+  L.push("", "=== 判斷 ===");
+  a.findings.forEach((f) => L.push(`[${f.level}] ${f.message}`));
+
+  if (h) {
+    L.push("", "=== 收孔細胞量分析 ===");
+    L.push(`來源孔盤：${h.plateName}` + (h.area ? `（單孔面積 ${fmtNum(h.area)} cm²，整盤 ${h.wellsTotal} 孔）` : ""));
+    L.push(`收取孔數：${h.harvestedWells} 孔，打散體積 ${fmtNum(h.harvestVolUl)} µL`);
+    L.push(`單孔活細胞數：${sci(h.cellsPerWell)} cells/well（約 ${fmtNum(roundHalfUp(h.cellsPerWell))} 顆）`);
+    L.push(`單孔總細胞數（含死細胞）：${sci(h.totalPerWell)} cells/well`);
+    if (h.density) L.push(`表面生長密度：${sci(h.density)} cells/cm²`);
+    if (h.plateTotal) L.push(`整盤推估總量：${sci(h.plateTotal)} 顆（全盤 ${h.wellsTotal} 孔同密度推估）`);
+    if (h.fold !== null) L.push(`增殖倍數：${fmtNum(h.fold)} 倍（由 ${fmtNum(h.seededPerWell)} 顆種植，約經歷 ${fmtNum(Number(h.doublings.toFixed(1)))} 次分裂倍增）`);
+  }
+
+  L.push("", "=== 速算提示 ===");
+  const k = r4(a.k);
+  if (a.concB !== null) {
+    L.push(`濃度 = (上槽 + 下槽) × K，K = DF × 10^4 / (2 × 格數) = ${k}`);
+    L.push(`本次：(${fmtNum(inp.aLive)} + ${fmtNum(inp.bLive)}) × ${k} = ${sci((inp.aLive + inp.bLive) * a.k)} cells/mL`);
+  } else {
+    L.push(`濃度 = 上槽 × K，K = DF × 10^4 / 格數 = ${k}`);
+    L.push(`本次：${fmtNum(inp.aLive)} × ${k} = ${sci(inp.aLive * a.k)} cells/mL`);
+  }
+  return L.join("\n");
+}
+
 function inputsFromForm(f) {
   const t = (k) => String(f[k] ?? "").trim();
   const num = (k, name, positive = false) => parseNumber(t(k), name, positive);
@@ -560,6 +824,56 @@ function inputsFromForm(f) {
   };
 }
 
+function harvestInputsFromForm(f) {
+  const t = (k) => String(f[k] ?? "").trim();
+  const num = (k, name, positive = false) => parseNumber(t(k), name, positive);
+  if (t("grids") === "") throw new Error("請選擇格數（4 或 9）");
+  const grids = checkGrids(Number(t("grids")));
+
+  let bLive = null, bDead = null;
+  if (t("b_live") !== "") {
+    bLive = num("b_live", "下槽活細胞數");
+    bDead = t("b_dead") !== "" ? num("b_dead", "下槽死細胞數") : 0;
+  } else if (t("b_dead") !== "") {
+    throw new Error("下槽有死細胞數時，也要輸入下槽活細胞數（或清空下槽）");
+  }
+
+  const plateType = t("harvest_plate") || "96";
+  const harvestedWells = parseWells(t("harvested_wells") || "1");
+  const unit = t("harvest_unit") || "ul";
+  const rawVol = num("harvest_vol", "收孔打散體積", true);
+  const harvestVolUl = unit === "ml" ? rawVol * 1000 : rawVol;
+
+  let seededPerWell = null;
+  if (t("seeded_per_well") !== "") {
+    seededPerWell = num("seeded_per_well", "當初每孔種植數", true);
+  }
+
+  let customArea = null, customWells = null;
+  if (plateType === "custom") {
+    customArea = num("custom_area", "單孔面積", true);
+    customWells = parseWells(t("custom_wells_total") || "1");
+  }
+
+  const baseInput = {
+    tubeMl: harvestVolUl / 1000,
+    preCell: num("pre_cell", "預稀釋的細胞液體積", true),
+    preDil: num("pre_dmem", "預稀釋的 DMEM 體積"),
+    tbCell: num("tb_cell", "Trypan 混合的細胞液體積", true),
+    tbDye: num("tb_dye", "Trypan blue 體積"),
+    grids,
+    aLive: num("a_live", "上槽活細胞數"),
+    aDead: t("a_dead") !== "" ? num("a_dead", "上槽死細胞數") : 0,
+    bLive, bDead,
+  };
+
+  const harvestOpts = {
+    plateType, harvestedWells, harvestVolUl, seededPerWell, customArea, customWells,
+  };
+
+  return { baseInput, harvestOpts };
+}
+
 const LOG_COLUMNS = [
   "日期時間", "打散DMEM_mL", "預稀釋細胞液_uL", "預稀釋DMEM_uL", "TB細胞液_uL", "TB_uL",
   "總稀釋倍數DF", "格數", "上槽活", "上槽死", "下槽活", "下槽死",
@@ -568,14 +882,37 @@ const LOG_COLUMNS = [
   "整管活細胞", "目標濃度Ct_per_mL", "配製總體積Vt_uL", "需要細胞數",
   "原液V1_uL", "DMEM_uL", "稀釋方式", "中間稀釋倍數", "中間液總體積Vi_uL", "第二段中間液_uL", "判斷",
 ];
+
 const g6 = (x) => String(Number(x.toPrecision(6)));
 const r2 = (x) => Number(x.toFixed(2));
 function pad2(n) { return String(n).padStart(2, "0"); }
 function stamp(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
+
 function buildLogRow(a, when) {
-  const i = a.inputs, p = a.plan, t = p ? p.twoStep : null, blank = "";
+  const i = a.inputs, p = a.plan, h = a.harvestPlan, t = p ? p.twoStep : null, blank = "";
+  if (h) {
+    // Harvest mode log row
+    return {
+      "日期時間": stamp(when), "打散DMEM_mL": Number((h.harvestVolUl / 1000).toFixed(4)),
+      "預稀釋細胞液_uL": i.preCell, "預稀釋DMEM_uL": i.preDil,
+      "TB細胞液_uL": i.tbCell, "TB_uL": i.tbDye, "總稀釋倍數DF": Number(a.df.toFixed(6)), "格數": i.grids,
+      "上槽活": i.aLive, "上槽死": i.aDead, "下槽活": i.bLive === null ? blank : i.bLive,
+      "下槽死": i.bDead === null ? blank : i.bDead, "實驗設定": `收孔:${h.plateName}`,
+      "每孔細胞數": roundHalfUp(h.cellsPerWell), "每孔體積_uL": h.harvestVolUl, "孔數": h.harvestedWells,
+      "餘量_%": h.fold !== null ? r2(h.fold) : blank,
+      "上槽濃度_per_mL": g6(a.concA), "下槽濃度_per_mL": a.concB === null ? blank : g6(a.concB),
+      "原液濃度C_per_mL": g6(a.stock), "兩槽差異_%": a.diffPct === null ? blank : r2(a.diffPct),
+      "存活率_%": r2(a.viability), "整管活細胞": g6(h.totalHarvestLive),
+      "目標濃度Ct_per_mL": blank, "配製總體積Vt_uL": blank,
+      "需要細胞數": h.plateTotal ? g6(h.plateTotal) : blank,
+      "原液V1_uL": blank, "DMEM_uL": blank,
+      "稀釋方式": "收孔分析", "中間稀釋倍數": blank,
+      "中間液總體積Vi_uL": blank, "第二段中間液_uL": blank,
+      "判斷": a.findings.filter((f) => f.level !== OK).map((f) => `[${f.level}] ${f.message}`).join(" | "),
+    };
+  }
   return {
     "日期時間": stamp(when), "打散DMEM_mL": i.tubeMl, "預稀釋細胞液_uL": i.preCell, "預稀釋DMEM_uL": i.preDil,
     "TB細胞液_uL": i.tbCell, "TB_uL": i.tbDye, "總稀釋倍數DF": Number(a.df.toFixed(6)), "格數": i.grids,
@@ -603,9 +940,10 @@ function toCsv(rows) {
 }
 
 const CORE = {
-  PRESETS, roundHalfUp, ceilToMultiple, fmtNum, sci, parseNumber, parseWells, dilutionFactor, totalDilution,
+  PRESETS, HARVEST_PRESETS, roundHalfUp, ceilToMultiple, fmtNum, sci, parseNumber, parseWells, dilutionFactor, totalDilution,
   chamberConcentration, differencePct, viabilityPct, targetConcentration, prepareVolume, quickK,
-  twoStepDilution, planSeeding, analyze, recipeSteps, stepText, summaryLine, renderReport, inputsFromForm,
+  twoStepDilution, planSeeding, planHarvest, analyze, analyzeHarvest, recipeSteps, stepText, summaryLine, summaryHarvestLine,
+  renderReport, renderHarvestReport, inputsFromForm, harvestInputsFromForm,
   buildLogRow, toCsv, LOG_COLUMNS,
 };
 // ==== core:end ====
@@ -614,10 +952,14 @@ const CORE = {
 (function () {
   if (typeof document === "undefined") return;
   const $ = (id) => document.getElementById(id);
-  const FIELDS = ["dmem_ml", "pre_cell", "pre_dmem", "tb_cell", "tb_dye", "a_live", "a_dead", "b_live", "b_dead",
-                  "preset", "cells_per_well", "well_ul", "wells", "margin"];
-  const SETUP_KEYS = ["dmem_ml", "pre_cell", "pre_dmem", "tb_cell", "tb_dye", "preset", "cells_per_well", "well_ul", "wells", "margin"];
-  const STORE_SETUP = "cellSeeding.setup.v1", STORE_LOG = "cellSeeding.log.v1";
+  const SEEDING_FIELDS = ["dmem_ml", "pre_cell", "pre_dmem", "tb_cell", "tb_dye", "a_live", "a_dead", "b_live", "b_dead",
+                          "preset", "cells_per_well", "well_ul", "wells", "margin"];
+  const HARVEST_FIELDS = ["harvest_vol", "harvest_unit", "pre_cell", "pre_dmem", "tb_cell", "tb_dye", "a_live", "a_dead", "b_live", "b_dead",
+                          "harvest_plate", "harvested_wells", "seeded_per_well", "custom_area", "custom_wells_total"];
+  const ALL_FIELDS = Array.from(new Set([...SEEDING_FIELDS, ...HARVEST_FIELDS]));
+  const STORE_SETUP = "cellSeeding.setup.v2", STORE_LOG = "cellSeeding.log.v2", STORE_MODE = "cellSeeding.mode.v2";
+  
+  let currentMode = "seeding"; // "seeding" | "harvest"
   let current = null, filling = false;
 
   const store = {
@@ -626,8 +968,8 @@ const CORE = {
   };
   const gridsValue = () => (document.querySelector('input[name="grids"]:checked') || {}).value || "";
   const readForm = () => {
-    const f = { grids: gridsValue() };
-    FIELDS.forEach((k) => { f[k] = $(k).value; });
+    const f = { grids: gridsValue(), mode: currentMode };
+    ALL_FIELDS.forEach((k) => { const el = $(k); if (el) f[k] = el.value; });
     return f;
   };
   const el = (tag, cls, text) => {
@@ -637,6 +979,23 @@ const CORE = {
     return n;
   };
   const setStatus = (text) => { $("status").textContent = text; };
+
+  function setMode(mode) {
+    currentMode = mode;
+    store.set(STORE_MODE, mode);
+    $("tabSeeding").className = "mode-tab " + (mode === "seeding" ? "active" : "");
+    $("tabSeeding").setAttribute("aria-selected", mode === "seeding" ? "true" : "false");
+    $("tabHarvest").className = "mode-tab " + (mode === "harvest" ? "active" : "");
+    $("tabHarvest").setAttribute("aria-selected", mode === "harvest" ? "true" : "false");
+
+    $("boxSeedingVol").style.display = mode === "seeding" ? "" : "none";
+    $("boxHarvestVol").style.display = mode === "harvest" ? "" : "none";
+    $("panelSeedingSetup").style.display = mode === "seeding" ? "" : "none";
+    $("panelHarvestSetup").style.display = mode === "harvest" ? "" : "none";
+    $("panelRecipe").style.display = mode === "seeding" ? "" : "none";
+    $("panelHarvestResult").style.display = mode === "harvest" ? "" : "none";
+    render();
+  }
 
   function updateFactors() {
     const f = (c, d) => {
@@ -651,41 +1010,60 @@ const CORE = {
   }
 
   function markInvalid() {
-    // 逐欄檢查，標出有問題的欄位（輸入尚未填的欄位不標紅，只在摘要提示）
-    const checks = { dmem_ml: [true], pre_cell: [true], pre_dmem: [false], tb_cell: [true], tb_dye: [false],
-                     a_live: [false], a_dead: [false], b_live: [false], b_dead: [false],
-                     cells_per_well: [true], well_ul: [true], margin: [false] };
-    Object.keys(checks).forEach((k) => {
-      const v = $(k).value.trim();
+    const activeFields = currentMode === "seeding" ? SEEDING_FIELDS : HARVEST_FIELDS;
+    const checks = {
+      dmem_ml: [true], harvest_vol: [true], pre_cell: [true], pre_dmem: [false], tb_cell: [true], tb_dye: [false],
+      a_live: [false], a_dead: [false], b_live: [false], b_dead: [false],
+      cells_per_well: [true], well_ul: [true], margin: [false],
+      harvested_wells: [true], seeded_per_well: [false], custom_area: [true], custom_wells_total: [true]
+    };
+    activeFields.forEach((k) => {
+      const input = $(k);
+      if (!input || checks[k] === undefined) return;
+      const v = input.value.trim();
       let bad = false;
-      if (v !== "") { try { CORE.parseNumber(v, "x", checks[k][0]); } catch (e) { bad = true; } }
-      $(k).setAttribute("aria-invalid", bad ? "true" : "false");
+      if (v !== "") {
+        try {
+          if (k === "wells" || k === "harvested_wells" || k === "custom_wells_total") CORE.parseWells(v);
+          else CORE.parseNumber(v, "x", checks[k][0]);
+        } catch (e) { bad = true; }
+      }
+      input.setAttribute("aria-invalid", bad ? "true" : "false");
     });
-    const w = $("wells").value.trim();
-    let badW = false;
-    if (w !== "") { try { CORE.parseWells(w); } catch (e) { badW = true; } }
-    $("wells").setAttribute("aria-invalid", badW ? "true" : "false");
   }
 
   function render() {
     updateFactors();
     markInvalid();
     const box = $("summary");
+    const f = readForm();
     let a = null;
+
     try {
-      a = CORE.analyze(CORE.inputsFromForm(readForm()));
+      if (currentMode === "seeding") {
+        a = CORE.analyze(CORE.inputsFromForm(f));
+      } else {
+        const parsed = CORE.harvestInputsFromForm(f);
+        a = CORE.analyzeHarvest(parsed.baseInput, parsed.harvestOpts);
+      }
     } catch (e) {
       current = null;
       box.className = "summary idle";
       $("summaryText").textContent = e.message;
       $("resultBody").replaceChildren(el("p", "empty", "輸入上槽（和下槽）的細胞數後，這裡會顯示結果。"));
       $("findings").replaceChildren();
-      $("recipe").replaceChildren(el("p", "empty", "—"));
+      if (currentMode === "seeding") {
+        $("recipe").replaceChildren(el("p", "empty", "—"));
+      } else {
+        $("harvestStats").replaceChildren(el("p", "empty", "—"));
+        $("boxTransferToSeeding").style.display = "none";
+      }
       $("quick").replaceChildren(el("p", "empty", "—"));
       return;
     }
+
     current = a;
-    const s = CORE.summaryLine(a);
+    const s = currentMode === "seeding" ? CORE.summaryLine(a) : CORE.summaryHarvestLine(a);
     box.className = "summary " + (s.level === "OK" ? "ok" : s.level === "!" ? "warn" : "err");
     $("summaryText").textContent = s.text;
 
@@ -700,37 +1078,103 @@ const CORE = {
       rows.push(["兩槽差異", `${a.diffPct.toFixed(2)} %`]);
     } else rows.push(["下槽", "未輸入，只用上槽"]);
     rows.push(["存活率", `${a.viability.toFixed(2)} %`]);
-    rows.push(["原液濃度 C", `${sci(a.stock)} cells/mL`]);
-    rows.push([`整管活細胞（${fmt(inp.tubeMl)} mL）`, `${sci(a.tubeCells)} 顆`]);
+    rows.push(["懸浮液濃度 C", `${sci(a.stock)} cells/mL`]);
+
+    if (currentMode === "seeding") {
+      rows.push([`整管活細胞（${fmt(inp.tubeMl)} mL）`, `${sci(a.tubeCells)} 顆`]);
+    } else if (a.harvestPlan) {
+      rows.push([`收孔懸浮液總活細胞（${fmt(a.harvestPlan.harvestVolUl)} µL）`, `${sci(a.harvestPlan.totalHarvestLive)} 顆`]);
+    }
     const table = el("table", "kv");
     rows.forEach(([k, v]) => { const tr = el("tr"); tr.append(el("td", "", k), el("td", "", v)); table.append(tr); });
     $("resultBody").replaceChildren(table);
 
-    $("findings").replaceChildren(...a.findings.map((f) => {
-      const li = el("li", "lv-" + (f.level === "OK" ? "OK" : f.level === "!" ? "warn" : "err"));
-      li.append(el("span", "tag", `[${f.level}]`), el("span", "", f.message));
+    $("findings").replaceChildren(...a.findings.map((finding) => {
+      const li = el("li", "lv-" + (finding.level === "OK" ? "OK" : finding.level === "!" ? "warn" : "err"));
+      li.append(el("span", "tag", `[${finding.level}]`), el("span", "", finding.message));
       return li;
     }));
 
-    const rec = $("recipe"), p = a.plan;
-    if (!p) {
-      rec.replaceChildren(el("p", "empty", "無法配製（原液濃度為 0）。"));
+    if (currentMode === "seeding") {
+      const rec = $("recipe"), p = a.plan;
+      if (!p) {
+        rec.replaceChildren(el("p", "empty", "無法配製（原液濃度為 0）。"));
+      } else {
+        const head = el("p", "hint",
+          `目標：每孔 ${fmt(inp.cellsPerWell)} cells / ${fmt(inp.wellUl)} µL → Ct = ${sci(p.targetConc)} cells/mL；` +
+          `配製總體積 ${CORE.roundHalfUp(p.totalUl)} µL（${inp.wells} 孔 × ${fmt(inp.wellUl)} µL × (1 + ${fmt(inp.marginPct)}%)，進位到 500 的倍數）；` +
+          `需要細胞 ${sci(p.cellsNeeded)} 顆`);
+        const nodes = [head];
+        if (!p.feasible) nodes.push(el("p", "hint", "此批細胞無法依目標配製（見上方 [X] 項目）。以下數字僅供參考："));
+        const ol = el("ol", "recipe");
+        CORE.recipeSteps(inp, p).forEach((st) => {
+          const li = el("li", st.last ? "last" : "");
+          if (st.stage) li.append(el("span", "stage", st.stage + " "));
+          li.append(document.createTextNode(st.text));
+          ol.append(li);
+        });
+        nodes.push(ol);
+        rec.replaceChildren(...nodes);
+      }
     } else {
-      const head = el("p", "hint",
-        `目標：每孔 ${fmt(inp.cellsPerWell)} cells / ${fmt(inp.wellUl)} µL → Ct = ${sci(p.targetConc)} cells/mL；` +
-        `配製總體積 ${CORE.roundHalfUp(p.totalUl)} µL（${inp.wells} 孔 × ${fmt(inp.wellUl)} µL × (1 + ${fmt(inp.marginPct)}%)，進位到 500 的倍數）；` +
-        `需要細胞 ${sci(p.cellsNeeded)} 顆`);
-      const nodes = [head];
-      if (!p.feasible) nodes.push(el("p", "hint", "此批細胞無法依目標配製（見上方 [X] 項目）。以下數字僅供參考："));
-      const ol = el("ol", "recipe");
-      CORE.recipeSteps(inp, p).forEach((st) => {
-        const li = el("li", st.last ? "last" : "");
-        if (st.stage) li.append(el("span", "stage", st.stage + " "));
-        li.append(document.createTextNode(st.text));
-        ol.append(li);
-      });
-      nodes.push(ol);
-      rec.replaceChildren(...nodes);
+      // Harvest Mode
+      const h = a.harvestPlan;
+      const box = $("harvestStats");
+      if (!h) {
+        box.replaceChildren(el("p", "empty", "無法計算收孔量。"));
+        $("boxTransferToSeeding").style.display = "none";
+      } else {
+        const grid = el("div", "stat-grid");
+
+        // 單孔活細胞數（Main Card）
+        const c1 = el("div", "stat-card main");
+        c1.append(
+          el("div", "stat-title", `單孔平均活細胞數 (${h.plateName})`),
+          el("div", "stat-val", sci(h.cellsPerWell)),
+          el("div", "stat-sub", `約 ${fmt(CORE.roundHalfUp(h.cellsPerWell))} 顆 / 孔（總共收 ${h.harvestedWells} 孔）`)
+        );
+        grid.append(c1);
+
+        // 生長密度
+        if (h.density) {
+          const c2 = el("div", "stat-card");
+          c2.append(
+            el("div", "stat-title", "表面生長密度"),
+            el("div", "stat-val", sci(h.density)),
+            el("div", "stat-sub", `cells / cm²（單孔面積 ${fmt(h.area)} cm²）`)
+          );
+          grid.append(c2);
+        }
+
+        // 整盤推估產量
+        if (h.plateTotal) {
+          const c3 = el("div", "stat-card");
+          c3.append(
+            el("div", "stat-title", "整盤推估總產量"),
+            el("div", "stat-val", sci(h.plateTotal)),
+            el("div", "stat-sub", `顆（全盤 ${h.wellsTotal} 孔均勻滿盤時）`)
+          );
+          grid.append(c3);
+        }
+
+        // 增殖倍數
+        if (h.fold !== null) {
+          const c4 = el("div", "stat-card");
+          c4.append(
+            el("div", "stat-title", "較當初種植增殖倍數"),
+            el("div", "stat-val", `${fmt(h.fold)} ×`),
+            el("div", "stat-sub", `約經歷 ${fmt(Number(h.doublings.toFixed(1)))} 次分裂倍增（原種 ${fmt(h.seededPerWell)} 顆）`)
+          );
+          grid.append(c4);
+        }
+
+        const details = el("p", "hint",
+          `懸浮液打散體積：${fmt(h.harvestVolUl)} µL；懸浮液濃度 C = ${sci(a.stock)} cells/mL；單孔總細胞（含死細胞）約 ${sci(h.totalPerWell)} cells。`
+        );
+
+        box.replaceChildren(grid, details);
+        $("boxTransferToSeeding").style.display = "";
+      }
     }
 
     const k = fmt(Number(a.k.toFixed(4)));
@@ -761,17 +1205,36 @@ const CORE = {
     if (!same) $("preset").value = "custom";
   }
 
+  function onHarvestPlateChange() {
+    const p = $("harvest_plate").value;
+    const custom = p === "custom";
+    $("boxCustomHarvest").style.display = custom ? "" : "none";
+    const preset = CORE.HARVEST_PRESETS[p];
+    if (preset && preset.defaultVolUl) {
+      if ($("harvest_unit").value === "ul") {
+        $("harvest_vol").value = String(preset.defaultVolUl);
+      } else {
+        $("harvest_vol").value = String(preset.defaultVolUl / 1000);
+      }
+    }
+  }
+
   // --- 記住設定（不含計數） ---
   function saveSetup() {
-    const o = { grids: gridsValue() };
-    SETUP_KEYS.forEach((k) => { o[k] = $(k).value; });
+    const o = { grids: gridsValue(), mode: currentMode };
+    ALL_FIELDS.forEach((k) => { const el = $(k); if (el) o[k] = el.value; });
     store.set(STORE_SETUP, o);
   }
   function loadSetup() {
+    const savedMode = store.get(STORE_MODE);
+    if (savedMode === "harvest" || savedMode === "seeding") currentMode = savedMode;
     const o = store.get(STORE_SETUP);
     if (!o || typeof o !== "object") return;
-    SETUP_KEYS.forEach((k) => { if (typeof o[k] === "string") $(k).value = o[k]; });
-    if (o.grids === "4" || o.grids === "9") document.querySelector(`input[name="grids"][value="${o.grids}"]`).checked = true;
+    ALL_FIELDS.forEach((k) => { const el = $(k); if (el && typeof o[k] === "string") el.value = o[k]; });
+    if (o.grids === "4" || o.grids === "9") {
+      const r = document.querySelector(`input[name="grids"][value="${o.grids}"]`);
+      if (r) r.checked = true;
+    }
   }
 
   // --- 紀錄 ---
@@ -780,8 +1243,8 @@ const CORE = {
     const log = getLog(), wrap = $("logWrap");
     $("btnCsv").disabled = $("btnLogClear").disabled = log.length === 0;
     if (!log.length) { wrap.replaceChildren(el("p", "empty", "還沒有紀錄。")); return; }
-    const cols = [["日期時間", "時間"], ["實驗設定", "設定"], ["原液濃度C_per_mL", "原液濃度 /mL"], ["存活率_%", "存活率 %"],
-                  ["兩槽差異_%", "差異 %"], ["原液V1_uL", "V1 µL"], ["配製總體積Vt_uL", "Vt µL"], ["稀釋方式", "方式"]];
+    const cols = [["日期時間", "時間"], ["實驗設定", "設定/規格"], ["原液濃度C_per_mL", "原液濃度 /mL"], ["存活率_%", "存活率 %"],
+                  ["兩槽差異_%", "差異 %"], ["每孔細胞數", "每孔細胞數"], ["整管活細胞", "總細胞數"], ["稀釋方式", "模式/方式"]];
     const table = el("table", "log"), thead = el("thead"), hr = el("tr");
     cols.forEach(([, label]) => hr.append(el("th", "", label)));
     thead.append(hr);
@@ -791,6 +1254,7 @@ const CORE = {
       cols.forEach(([key]) => {
         let v = r[key] === undefined ? "" : r[key];
         if (key === "原液濃度C_per_mL" && v !== "") v = CORE.sci(Number(v));
+        if (key === "整管活細胞" && v !== "") v = CORE.sci(Number(v));
         tr.append(el("td", "", String(v)));
       });
       tbody.append(tr);
@@ -806,9 +1270,10 @@ const CORE = {
     if (store.set(STORE_LOG, log)) { setStatus(`已存入紀錄（共 ${log.length} 筆，存在這個瀏覽器）`); renderLog(); }
     else setStatus("無法寫入瀏覽器儲存空間（可能是無痕模式）；請改用「複製結果」保存");
   });
+
   $("btnCopy").addEventListener("click", async () => {
     if (!current) { setStatus("目前的輸入有誤，沒有結果可複製"); return; }
-    const text = CORE.renderReport(current);
+    const text = currentMode === "seeding" ? CORE.renderReport(current) : CORE.renderHarvestReport(current);
     try { await navigator.clipboard.writeText(text); setStatus("已複製結果到剪貼簿"); }
     catch (e) {
       const ta = el("textarea"); ta.value = text; ta.className = "sr"; document.body.append(ta); ta.select();
@@ -816,28 +1281,87 @@ const CORE = {
       ta.remove(); setStatus(ok ? "已複製結果到剪貼簿" : "無法自動複製，請手動選取結果");
     }
   });
+
   $("btnClear").addEventListener("click", () => {
     $("a_live").value = ""; $("a_dead").value = "0"; $("b_live").value = ""; $("b_dead").value = "";
     render(); $("a_live").focus(); setStatus("");
   });
+
   $("btnCsv").addEventListener("click", () => {
-    const blob = new Blob(["﻿" + CORE.toCsv(getLog())], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF" + CORE.toCsv(getLog())], { type: "text/csv;charset=utf-8" });
     const a = el("a"); a.href = URL.createObjectURL(blob); a.download = "seeding_log.csv";
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
+
   $("btnLogClear").addEventListener("click", () => {
     if (confirm("要清除這個瀏覽器裡的全部紀錄嗎？（建議先下載 CSV）")) { store.set(STORE_LOG, []); renderLog(); setStatus("紀錄已清除"); }
   });
 
-  // --- 事件 ---
+  $("btnUseForSeeding").addEventListener("click", () => {
+    if (!current || !current.harvestPlan) return;
+    setMode("seeding");
+    setStatus("已將收孔算出的濃度帶入種盤配方！");
+  });
+
+  // --- 模式切換事件 ---
+  $("tabSeeding").addEventListener("click", () => setMode("seeding"));
+  $("tabHarvest").addEventListener("click", () => setMode("harvest"));
+
+  // --- 表單事件 ---
   $("preset").addEventListener("change", () => { applyPreset(); render(); saveSetup(); });
   ["cells_per_well", "well_ul", "wells"].forEach((k) => $(k).addEventListener("input", onSetupEdit));
-  FIELDS.forEach((k) => $(k).addEventListener("input", () => { render(); saveSetup(); }));
+  $("harvest_plate").addEventListener("change", () => { onHarvestPlateChange(); render(); saveSetup(); });
+  $("harvest_unit").addEventListener("change", () => { render(); saveSetup(); });
+
+  ALL_FIELDS.forEach((k) => {
+    const el = $(k);
+    if (el) el.addEventListener("input", () => { render(); saveSetup(); });
+  });
   document.querySelectorAll('input[name="grids"]').forEach((r) => r.addEventListener("change", () => { render(); saveSetup(); }));
 
+  // --- PWA 安裝按鈕支援 ---
+  let deferredPrompt = null;
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    $("btnInstall").style.display = "inline-flex";
+  });
+  $("btnInstall").addEventListener("click", async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === "accepted") {
+      $("btnInstall").style.display = "none";
+    }
+    deferredPrompt = null;
+  });
+
+  // --- 初始化 ---
   loadSetup();
+  setMode(currentMode);
+  onHarvestPlateChange();
   renderLog();
   render();
+
+  // --- 註冊 Service Worker ---
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").then((reg) => {
+        reg.addEventListener("updatefound", () => {
+          const installing = reg.installing;
+          if (installing) {
+            installing.addEventListener("statechange", () => {
+              if (installing.state === "installed" && navigator.serviceWorker.controller) {
+                setStatus("應用程式已更新，下次重開或重新整理即可套用！");
+              }
+            });
+          }
+        });
+      }).catch((err) => {
+        console.warn("ServiceWorker registration failed:", err);
+      });
+    });
+  }
 })();
 </script>
 </body>

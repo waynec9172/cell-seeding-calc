@@ -185,3 +185,55 @@ test("紀錄列與 CSV", () => {
   const warn = C.buildLogRow(C.analyze(base({ aLive: 150, bLive: 250 })), new Date());
   assert.match(warn["判斷"], /^\[X\] 兩槽差異/);
 });
+
+test("收孔／切孔產量計算（96 孔與 24 孔）", () => {
+  // 案例 A：96 孔切 1 孔，100 µL DMEM 打散，4 格計數，原液 4.05×10^5 cells/mL
+  const h96 = C.planHarvest(4.05e5, 95.0, 100, 1, "96", null, null, 10000);
+  near(h96.totalHarvestLive, 40500, 1);
+  near(h96.cellsPerWell, 40500, 1);
+  near(h96.density, 40500 / 0.32, 1); // 126562.5 cells/cm²
+  near(h96.plateTotal, 40500 * 96, 1); // 3,888,000 cells
+  near(h96.fold, 4.05, 0.01);
+  near(h96.doublings, Math.log2(4.05), 0.01);
+
+  // 案例 B：24 孔切 1 孔，500 µL DMEM 打散，原液 5.0×10^5 cells/mL
+  const h24 = C.planHarvest(5.0e5, 96.0, 500, 1, "24", null, null, 50000);
+  near(h24.totalHarvestLive, 250000, 1);
+  near(h24.cellsPerWell, 250000, 1);
+  near(h24.density, 250000 / 1.9, 1); // ~1.32×10^5 cells/cm²
+  near(h24.plateTotal, 250000 * 24, 1); // 6,000,000 cells
+  near(h24.fold, 5.0, 0.01);
+
+  // 案例 C：切 2 孔 pooled 一起打散在 200 µL 中
+  const pooled = C.planHarvest(4.0e5, 95.0, 200, 2, "96");
+  near(pooled.totalHarvestLive, 80000, 1);
+  near(pooled.cellsPerWell, 40000, 1); // 平均單孔 40000
+});
+
+test("收孔表單解析與整合分析", () => {
+  const f = {
+    grids: "4", a_live: "80", a_dead: "4", b_live: "82", b_dead: "4",
+    pre_cell: "10", pre_dmem: "0", tb_cell: "10", tb_dye: "10",
+    harvest_plate: "96", harvested_wells: "1", harvest_vol: "100", harvest_unit: "ul",
+    seeded_per_well: "10000"
+  };
+  const parsed = C.harvestInputsFromForm(f);
+  assert.equal(parsed.harvestOpts.plateType, "96");
+  assert.equal(parsed.harvestOpts.harvestVolUl, 100);
+  assert.equal(parsed.harvestOpts.seededPerWell, 10000);
+
+  const a = C.analyzeHarvest(parsed.baseInput, parsed.harvestOpts);
+  near(a.stock, 4.05e5, 1);
+  near(a.harvestPlan.cellsPerWell, 40500, 1);
+  assert.equal(a.hasError, false);
+
+  const rep = C.renderHarvestReport(a);
+  assert.ok(rep.includes("=== 收孔細胞量分析 ==="));
+  assert.ok(rep.includes("單孔活細胞數"));
+  assert.ok(rep.includes("96 孔盤"));
+
+  const row = C.buildLogRow(a, new Date());
+  assert.equal(row["實驗設定"], "收孔:96 孔盤");
+  assert.equal(row["每孔細胞數"], 40500);
+  assert.equal(row["稀釋方式"], "收孔分析");
+});

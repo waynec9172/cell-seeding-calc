@@ -518,5 +518,56 @@ class GuiWindow(unittest.TestCase):
         self.assertIsNone(self.app.analysis)
 
 
+class HarvestCases(unittest.TestCase):
+    """切孔／收孔細胞量計算測試。"""
+
+    def test_harvest_96_well(self):
+        h = c.plan_harvest(4.05e5, 95.0, 100.0, 1, "96", seeded_per_well=10000.0)
+        self.assertAlmostEqual(h.total_harvest_live, 40500.0, delta=1.0)
+        self.assertAlmostEqual(h.cells_per_well, 40500.0, delta=1.0)
+        self.assertAlmostEqual(h.density, 40500.0 / 0.32, delta=1.0)
+        self.assertAlmostEqual(h.plate_total, 40500.0 * 96, delta=1.0)
+        self.assertAlmostEqual(h.fold, 4.05, delta=0.01)
+        self.assertAlmostEqual(h.doublings, 2.018, delta=0.01)
+
+    def test_harvest_24_well(self):
+        h = c.plan_harvest(5.0e5, 96.0, 500.0, 1, "24", seeded_per_well=50000.0)
+        self.assertAlmostEqual(h.total_harvest_live, 250000.0, delta=1.0)
+        self.assertAlmostEqual(h.cells_per_well, 250000.0, delta=1.0)
+        self.assertAlmostEqual(h.density, 250000.0 / 1.9, delta=1.0)
+        self.assertAlmostEqual(h.plate_total, 250000.0 * 24, delta=1.0)
+        self.assertAlmostEqual(h.fold, 5.0, delta=0.01)
+
+    def test_harvest_pooled_wells(self):
+        h = c.plan_harvest(4.0e5, 95.0, 200.0, 2, "96")
+        self.assertAlmostEqual(h.total_harvest_live, 80000.0, delta=1.0)
+        self.assertAlmostEqual(h.cells_per_well, 40000.0, delta=1.0)
+
+    def test_harvest_cli_mode(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ret = c.main([
+                "--mode", "harvest",
+                "--a-live", "80", "--a-dead", "4",
+                "--harvest-plate", "96", "--harvest-vol-ul", "100",
+                "--seeded-cells", "10000",
+                "--no-log"
+            ])
+        self.assertEqual(ret, 0)
+        text = out.getvalue()
+        self.assertIn("=== 收孔細胞量分析 ===", text)
+        self.assertIn("96 孔盤", text)
+        self.assertIn("單孔活細胞數", text)
+
+    def test_harvest_log_row(self):
+        inp = make_inputs(a_live=80, a_dead=4, b_live=82, b_dead=4)
+        a = c.analyze_harvest(inp, plate_type="96", harvest_vol_ul=100.0, harvested_wells=1, seeded_per_well=10000.0)
+        row = c.build_log_row(a, dt.datetime(2026, 10, 14, 12, 0, 0))
+        self.assertEqual(row["實驗設定"], "收孔:96 孔盤")
+        self.assertEqual(row["每孔細胞數"], 40500)
+        self.assertEqual(row["稀釋方式"], "收孔分析")
+
+
 if __name__ == "__main__":
     unittest.main()
+

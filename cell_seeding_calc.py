@@ -82,7 +82,26 @@ CUSTOM = "custom"
 DEFAULT_PRESET = "96d1"
 
 
+class HarvestPreset(NamedTuple):
+    name: str
+    area: Optional[float]  # cm²
+    wells: int
+    default_vol_ul: float
+
+
+HARVEST_PRESETS: Dict[str, HarvestPreset] = {
+    "96": HarvestPreset("96 孔盤", 0.32, 96, 100.0),
+    "48": HarvestPreset("48 孔盤", 0.95, 48, 250.0),
+    "24": HarvestPreset("24 孔盤", 1.9, 24, 500.0),
+    "12": HarvestPreset("12 孔盤", 3.8, 12, 1000.0),
+    "6": HarvestPreset("6 孔盤", 9.5, 6, 1500.0),
+    "10cm": HarvestPreset("10 cm Dish", 55.0, 1, 5000.0),
+    "custom": HarvestPreset("自訂規格", None, 1, 500.0),
+}
+
+
 class Finding(NamedTuple):
+
     level: str      # OK / ! / X
     message: str
 
@@ -318,7 +337,71 @@ def plan_seeding(stock_conc: float, cells_per_well: float, well_ul: float,
     )
 
 
+@dataclass(frozen=True)
+class HarvestPlan:
+    plate_type: str
+    plate_name: str
+    harvested_wells: int
+    harvest_vol_ul: float
+    total_harvest_live: float
+    cells_per_well: float
+    total_per_well: float
+    area: Optional[float]
+    density: Optional[float]
+    wells_total: Optional[int]
+    plate_total: Optional[float]
+    seeded_per_well: Optional[float]
+    fold: Optional[float]
+    doublings: Optional[float]
+
+
+def plan_harvest(stock_conc: float, viability_pct: float,
+                 harvest_vol_ul: float, harvested_wells: int,
+                 plate_type: str = "96",
+                 custom_area: Optional[float] = None,
+                 custom_wells: Optional[int] = None,
+                 seeded_per_well: Optional[float] = None) -> HarvestPlan:
+    """由懸浮液濃度與收孔條件計算單孔細胞數、生長密度與整盤推估。"""
+    check_positive(stock_conc, "懸浮液濃度")
+    check_positive(harvest_vol_ul, "收孔打散體積")
+    check_positive(harvested_wells, "收取的孔數")
+
+    preset = HARVEST_PRESETS.get(plate_type, HARVEST_PRESETS["custom"])
+    area = custom_area if plate_type == "custom" else preset.area
+    wells_total = custom_wells if plate_type == "custom" else preset.wells
+
+    total_harvest_live = stock_conc * (harvest_vol_ul / 1000.0)
+    cells_per_well = total_harvest_live / harvested_wells
+    total_per_well = (cells_per_well / (viability_pct / 100.0)) if viability_pct > 0 else cells_per_well
+    density = (cells_per_well / area) if area and area > 0 else None
+    plate_total = (cells_per_well * wells_total) if wells_total and wells_total > 0 else None
+
+    fold = None
+    doublings = None
+    if seeded_per_well and seeded_per_well > 0:
+        fold = cells_per_well / seeded_per_well
+        doublings = math.log2(fold) if fold > 0 else 0.0
+
+    return HarvestPlan(
+        plate_type=plate_type,
+        plate_name=preset.name,
+        harvested_wells=harvested_wells,
+        harvest_vol_ul=harvest_vol_ul,
+        total_harvest_live=total_harvest_live,
+        cells_per_well=cells_per_well,
+        total_per_well=total_per_well,
+        area=area,
+        density=density,
+        wells_total=wells_total,
+        plate_total=plate_total,
+        seeded_per_well=seeded_per_well,
+        fold=fold,
+        doublings=doublings,
+    )
+
+
 # ------------------------------------------------------------- 整體分析 ----
+
 
 @dataclass(frozen=True)
 class Inputs:
@@ -375,6 +458,7 @@ class Analysis:
     k: float
     plan: Optional[SeedingPlan]
     findings: Tuple[Finding, ...]
+    harvest_plan: Optional[HarvestPlan] = None
 
     @property
     def has_error(self) -> bool:
@@ -468,7 +552,46 @@ def analyze(inp: Inputs) -> Analysis:
     )
 
 
+def analyze_harvest(inp: Inputs, plate_type: str = "96",
+                    harvest_vol_ul: float = 100.0,
+                    harvested_wells: int = 1,
+                    custom_area: Optional[float] = None,
+                    custom_wells: Optional[int] = None,
+                    seeded_per_well: Optional[float] = None) -> Analysis:
+    """收孔細胞分析：結合計數結果與收孔條件。"""
+    base = analyze(inp)
+    if base.stock_conc <= 0:
+        return base
+    h = plan_harvest(
+        base.stock_conc, base.viability_pct, harvest_vol_ul,
+        harvested_wells, plate_type, custom_area, custom_wells, seeded_per_well
+    )
+    extra_findings: List[Finding] = []
+    if h.density is not None:
+        if h.density > 2.5e5:
+            extra_findings.append(Finding(WARN, f"生長密度 {sci(h.density)} cells/cm² 偏高（> 2.5×10⁵）：細胞可能已 100% 滿盤（過密），建議縮短培養時間"))
+        elif h.density < 2e4:
+            extra_findings.append(Finding(WARN, f"生長密度 {sci(h.density)} cells/cm² 偏低（< 2×10⁴）：約 < 20% confluence，若要做收樣細胞量可能不足"))
+        else:
+            extra_findings.append(Finding(OK, f"生長密度 {sci(h.density)} cells/cm²：約在對數生長期／適合收樣區間"))
+    if h.fold is not None:
+        if h.fold < 1:
+            extra_findings.append(Finding(WARN, f"收孔細胞數小於當初種植數（增殖倍數 {fmt_num(h.fold)}× < 1）：細胞可能未貼附或生長停滯"))
+        else:
+            doublings_str = fmt_num(round(h.doublings, 1)) if h.doublings is not None else "0"
+            extra_findings.append(Finding(OK, f"較當初種植增殖 {fmt_num(h.fold)} 倍（約經歷 {doublings_str} 次分裂倍增）"))
+
+    return Analysis(
+        inputs=base.inputs, df=base.df, conc_a=base.conc_a, conc_b=base.conc_b,
+        per_grid_a=base.per_grid_a, per_grid_b=base.per_grid_b, stock_conc=base.stock_conc,
+        diff_pct=base.diff_pct, viability_pct=base.viability_pct, tube_cells=base.tube_cells,
+        k=base.k, plan=base.plan, findings=tuple(list(base.findings) + extra_findings),
+        harvest_plan=h
+    )
+
+
 # ---------------------------------------------------------------- 輸出 ----
+
 
 def _ul(value: float) -> str:
     return f"{round_half_up(value)} µL"
@@ -550,6 +673,62 @@ def render_report(a: Analysis) -> str:
     return "\n".join(lines)
 
 
+def render_harvest_report(a: Analysis) -> str:
+    inp = a.inputs
+    h = a.harvest_plan
+    pre = (inp.pre_cell_ul + inp.pre_diluent_ul) / inp.pre_cell_ul
+    tb = (inp.tb_cell_ul + inp.tb_dye_ul) / inp.tb_cell_ul
+    lines: List[str] = []
+    add = lines.append
+
+    add("=== 計數結果 ===")
+    add(f"總稀釋倍數 DF：{fmt_num(round(a.df, 4))}"
+        f"（預稀釋 {fmt_num(round(pre, 4))} × trypan {fmt_num(round(tb, 4))}）")
+    add(f"上槽濃度：{sci(a.conc_a)} cells/mL（平均每格 {fmt_num(a.per_grid_a)} 顆）")
+    if a.conc_b is not None:
+        add(f"下槽濃度：{sci(a.conc_b)} cells/mL（平均每格 {fmt_num(a.per_grid_b)} 顆）")
+        add(f"兩槽差異：{a.diff_pct:.2f} %")
+    else:
+        add("下槽：未輸入，只用上槽")
+    add(f"存活率：{a.viability_pct:.2f} %")
+    add(f"懸浮液濃度 C：{sci(a.stock_conc)} cells/mL")
+    if h is not None:
+        add(f"收下總活細胞（{fmt_num(h.harvest_vol_ul)} µL）：{sci(h.total_harvest_live)} 顆")
+
+    add("")
+    add("=== 判斷 ===")
+    for f in a.findings:
+        add(f"[{f.level}] {f.message}")
+
+    if h is not None:
+        add("")
+        add("=== 收孔細胞量分析 ===")
+        area_info = f"（單孔面積 {fmt_num(h.area)} cm²，整盤 {h.wells_total} 孔）" if h.area else ""
+        add(f"來源孔盤：{h.plate_name}{area_info}")
+        add(f"收取孔數：{h.harvested_wells} 孔，打散體積 {fmt_num(h.harvest_vol_ul)} µL")
+        add(f"單孔活細胞數：{sci(h.cells_per_well)} cells/well（約 {fmt_num(round_half_up(h.cells_per_well))} 顆）")
+        add(f"單孔總細胞數（含死細胞）：{sci(h.total_per_well)} cells/well")
+        if h.density is not None:
+            add(f"表面生長密度：{sci(h.density)} cells/cm²")
+        if h.plate_total is not None:
+            add(f"整盤推估總量：{sci(h.plate_total)} 顆（全盤 {h.wells_total} 孔同密度推估）")
+        if h.fold is not None:
+            doublings_str = fmt_num(round(h.doublings, 1)) if h.doublings is not None else "0"
+            add(f"增殖倍數：{fmt_num(h.fold)} 倍（由 {fmt_num(h.seeded_per_well)} 顆種植，約經歷 {doublings_str} 次分裂倍增）")
+
+    add("")
+    add("=== 速算提示 ===")
+    if a.conc_b is not None:
+        add(f"濃度 = (上槽 + 下槽) × K，K = DF × 10^4 / (2 × 格數) = {fmt_num(round(a.k, 4))}")
+        live_sum = inp.a_live + inp.b_live
+        add(f"本次：({fmt_num(inp.a_live)} + {fmt_num(inp.b_live)}) × {fmt_num(round(a.k, 4))} = {sci(live_sum * a.k)} cells/mL")
+    else:
+        add(f"濃度 = 上槽 × K，K = DF × 10^4 / 格數 = {fmt_num(round(a.k, 4))}")
+        add(f"本次：{fmt_num(inp.a_live)} × {fmt_num(round(a.k, 4))} = {sci(inp.a_live * a.k)} cells/mL")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- 紀錄 ----
 
 LOG_COLUMNS = [
@@ -567,6 +746,43 @@ def build_log_row(a: Analysis, when: dt.datetime) -> Dict[str, object]:
     inp, p = a.inputs, a.plan
     blank = ""
     t = p.two_step if p else None
+    if a.harvest_plan is not None:
+        h = a.harvest_plan
+        return {
+            "日期時間": when.strftime("%Y-%m-%d %H:%M:%S"),
+            "打散DMEM_mL": round(h.harvest_vol_ul / 1000.0, 4),
+            "預稀釋細胞液_uL": inp.pre_cell_ul,
+            "預稀釋DMEM_uL": inp.pre_diluent_ul,
+            "TB細胞液_uL": inp.tb_cell_ul,
+            "TB_uL": inp.tb_dye_ul,
+            "總稀釋倍數DF": round(a.df, 6),
+            "格數": inp.grids,
+            "上槽活": inp.a_live,
+            "上槽死": inp.a_dead,
+            "下槽活": blank if inp.b_live is None else inp.b_live,
+            "下槽死": blank if inp.b_dead is None else inp.b_dead,
+            "實驗設定": f"收孔:{h.plate_name}",
+            "每孔細胞數": round_half_up(h.cells_per_well),
+            "每孔體積_uL": h.harvest_vol_ul,
+            "孔數": h.harvested_wells,
+            "餘量_%": round(h.fold, 2) if h.fold is not None else blank,
+            "上槽濃度_per_mL": f"{a.conc_a:.6g}",
+            "下槽濃度_per_mL": blank if a.conc_b is None else f"{a.conc_b:.6g}",
+            "原液濃度C_per_mL": f"{a.stock_conc:.6g}",
+            "兩槽差異_%": blank if a.diff_pct is None else round(a.diff_pct, 2),
+            "存活率_%": round(a.viability_pct, 2),
+            "整管活細胞": f"{h.total_harvest_live:.6g}",
+            "目標濃度Ct_per_mL": blank,
+            "配製總體積Vt_uL": blank,
+            "需要細胞數": f"{h.plate_total:.6g}" if h.plate_total else blank,
+            "原液V1_uL": blank,
+            "DMEM_uL": blank,
+            "稀釋方式": "收孔分析",
+            "中間稀釋倍數": blank,
+            "中間液總體積Vi_uL": blank,
+            "第二段中間液_uL": blank,
+            "判斷": " | ".join(f"[{f.level}] {f.message}" for f in a.findings if f.level != OK),
+        }
     return {
         "日期時間": when.strftime("%Y-%m-%d %H:%M:%S"),
         "打散DMEM_mL": inp.tube_ml,
@@ -602,6 +818,7 @@ def build_log_row(a: Analysis, when: dt.datetime) -> Dict[str, object]:
         "第二段中間液_uL": blank if t is None else round(t.transfer_ul, 2),
         "判斷": " | ".join(f"[{f.level}] {f.message}" for f in a.findings if f.level != OK),
     }
+
 
 
 def append_log(path: str, row: Dict[str, object]) -> None:
@@ -678,11 +895,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wells", type=conv(parse_wells), default=None,
                    help="孔數（custom 必填；也可覆寫 preset）")
     p.add_argument("--margin", type=conv(number_parser("餘量 %")), default=None, help="多抓的餘量 %%（預設 25）")
+    p.add_argument("--mode", choices=["seeding", "harvest"], default="seeding",
+                   help="模式：seeding (種盤配方) 或 harvest (切孔／收孔細胞量分析)")
+    p.add_argument("--harvest-plate", choices=list(HARVEST_PRESETS), default="96",
+                   help="收孔來源盤別（預設 96）")
+    p.add_argument("--harvest-wells", type=conv(parse_wells), default=1,
+                   help="收取孔數（預設 1）")
+    p.add_argument("--harvest-vol-ul", type=conv(number_parser("收孔打散體積", True)), default=None,
+                   help="收孔打散用 DMEM 體積 µL（96 孔預設 100，24 孔預設 500）")
+    p.add_argument("--seeded-cells", type=conv(number_parser("當初每孔種植數", True)), default=None,
+                   help="當初每孔種植細胞數（選填，用來算增殖倍數）")
+    p.add_argument("--custom-area", type=conv(number_parser("自訂單孔面積", True)), default=None,
+                   help="自訂單孔面積 cm²（harvest-plate 為 custom 時使用）")
+    p.add_argument("--custom-wells", type=conv(parse_wells), default=None,
+                   help="自訂整盤孔數（harvest-plate 為 custom 時使用）")
     p.add_argument("--gui", action="store_true", help="開啟圖形介面（命令列參數的值會當作初始值）")
     p.add_argument("-i", "--interactive", action="store_true", help="即使有給 --a-live 也逐題詢問（參數值當預設）")
     p.add_argument("--log-file", default=None, help="紀錄檔路徑（預設為本程式旁的 seeding_log.csv）")
     p.add_argument("--no-log", action="store_true", help="這次不寫紀錄")
     return p
+
 
 
 def default_log_path() -> str:
@@ -1170,7 +1402,25 @@ def main(argv: Optional[List[str]] = None, input_fn: InputFn = input) -> int:
             inputs = collect_interactive(args, input_fn)
         else:
             inputs = collect_batch(args)
-        result = analyze(inputs)
+
+        if args.mode == "harvest":
+            plate = args.harvest_plate or "96"
+            vol = args.harvest_vol_ul
+            if vol is None:
+                vol = HARVEST_PRESETS[plate].default_vol_ul
+            result = analyze_harvest(
+                inputs,
+                plate_type=plate,
+                harvest_vol_ul=vol,
+                harvested_wells=args.harvest_wells,
+                custom_area=args.custom_area,
+                custom_wells=args.custom_wells,
+                seeded_per_well=args.seeded_cells,
+            )
+            report_text = render_harvest_report(result)
+        else:
+            result = analyze(inputs)
+            report_text = render_report(result)
     except (EOFError, KeyboardInterrupt):
         print("\n已取消。")
         return 130
@@ -1179,7 +1429,8 @@ def main(argv: Optional[List[str]] = None, input_fn: InputFn = input) -> int:
         return 2  # parser.error 已經 exit，這行只是讓型別檢查安心
 
     print()
-    print(render_report(result))
+    print(report_text)
+
 
     if not args.no_log:
         path = args.log_file or default_log_path()
